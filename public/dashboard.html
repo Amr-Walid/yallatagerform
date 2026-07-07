@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة تحكم التكويد - يلا تاجر</title>
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div class="dashboard-container">
+    
+    <!-- Dashboard Header -->
+    <div class="dashboard-header">
+      <div class="dashboard-title">
+        <h1>لوحة تحكم تكويد التجار <i class="bi bi-laptop"></i></h1>
+        <p style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0;">
+          <span>إدارة طلبات مناديب الشارع وتكويد العملاء في النظام</span>
+          <span id="autoRefreshBadge" style="font-size: 11px; color: var(--primary-color); background: #e0e8ff; border: 1px solid #c5d4f9; padding: 2px 10px; border-radius: 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;">
+            <i class="bi bi-arrow-clockwise" id="refreshIcon"></i>
+            تحديث تلقائي خلال <span id="refreshCountdown">60</span> ثانية
+          </span>
+        </p>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <button id="manageUsersBtn" class="btn btn-outline"><i class="bi bi-people-fill"></i> إدارة المسؤولين</button>
+        <a href="index.html" class="btn btn-outline" target="_blank"><i class="bi bi-plus-lg"></i> فتح فورم مندوب الشارع</a>
+        <button id="logoutBtn" class="btn btn-outline" style="color: #c53030; border-color: #feb2b2; background-color: #fff5f5;"><i class="bi bi-box-arrow-right"></i> تسجيل الخروج</button>
+      </div>
+    </div>
+
+    <!-- Statistics Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-title">إجمالي التجار المسجلين</span>
+        <span class="stat-val" id="statTotal">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">قيد التكويد (بانتظار الإجراء)</span>
+        <span class="stat-val pending" id="statPending">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">تم التكويد والتفعيل</span>
+        <span class="stat-val coded" id="statCoded">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">غير محملين في ملف CSV</span>
+        <span class="stat-val new" id="statNotDownloaded">0</span>
+      </div>
+    </div>
+
+    <!-- Filters & Actions Card -->
+    <div class="filter-card">
+      <!-- Search Bar -->
+      <div class="form-group full-width" style="margin-bottom: 20px;">
+        <label for="searchBar" style="font-weight: 700; font-size: 13px; margin-bottom: 8px; display: block; color: var(--primary-color);">🔍 بحث سريع</label>
+        <div style="position: relative; display: flex; align-items: center;">
+          <i class="bi bi-search" style="position: absolute; right: 15px; color: var(--text-muted); font-size: 14px;"></i>
+          <input type="text" id="searchBar" class="form-input" placeholder="ابحث باسم التاجر، رقم الهاتف، أو البريد الإلكتروني للعميل..." style="padding-right: 42px; background-color: #fafbfc; border-color: var(--border-color);">
+        </div>
+      </div>
+      <div class="filter-grid">
+        
+        <!-- Status Filter -->
+        <div class="form-group">
+          <label for="filterStatus">حالة التكويد</label>
+          <select id="filterStatus" class="form-select">
+            <option value="">الكل</option>
+            <option value="pending">قيد الانتظار</option>
+            <option value="coded">تم التكويد</option>
+          </select>
+        </div>
+
+        <!-- Downloaded Filter -->
+        <div class="form-group">
+          <label for="filterDownloaded">حالة تحميل الـ CSV</label>
+          <select id="filterDownloaded" class="form-select">
+            <option value="">الكل</option>
+            <option value="1">تم التحميل</option>
+            <option value="0">لم يتم التحميل</option>
+          </select>
+        </div>
+
+        <!-- Uploaded Filter -->
+        <div class="form-group">
+          <label for="filterUploaded">حالة الرفع والتفعيل</label>
+          <select id="filterUploaded" class="form-select">
+            <option value="">الكل</option>
+            <option value="1">تم الرفع والتفعيل</option>
+            <option value="0">لم يتم الرفع بعد</option>
+          </select>
+        </div>
+
+        <!-- Actions -->
+        <div class="form-group" style="flex-direction: row; gap: 10px;">
+          <button id="exportCsvBtn" class="btn btn-primary">
+            <i class="bi bi-file-earmark-arrow-down-fill"></i> تحميل البيانات الجديدة (CSV)
+          </button>
+          <button id="markUploadedBtn" class="btn btn-success">
+            <i class="bi bi-check-all"></i> تعليم كـ تم الرفع
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Data Table Card -->
+    <div class="table-card">
+      <div class="table-responsive">
+        <table class="data-table" id="merchantsTable">
+          <thead>
+            <tr>
+              <th style="width: 40px; text-align: center;"><input type="checkbox" id="selectAllCheckbox"></th>
+              <th>العميل والمتجر</th>
+              <th>بيانات الاتصال</th>
+              <th>الموقع الجغرافي</th>
+              <th style="text-align: center; width: 110px;">المرفقات</th>
+              <th>التسجيل والحساب</th>
+              <th style="text-align: center; width: 120px;">حالة الإجراءات</th>
+              <th style="text-align: center; width: 130px;">التكويد</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <!-- Dynamic Rows -->
+            <tr>
+              <td colspan="13" style="text-align: center; padding: 30px; color: var(--text-muted);">
+                ⏳ جاري تحميل البيانات...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Image Lightbox Modal -->
+  <div id="imageModal" class="image-modal">
+    <span class="modal-close" id="modalClose">&times;</span>
+    <img class="modal-content" id="modalImg">
+  </div>
+
+  <!-- Coding & Activation Modal -->
+  <div id="codingModal" class="image-modal" style="display: none; align-items: center; justify-content: center; padding-top: 0; background-color: rgba(0,0,0,0.5);">
+    <div style="background: white; width: 100%; max-width: 450px; padding: 25px; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); position: relative; margin: 15px; direction: rtl; text-align: right;">
+      <span id="closeCodingModal" style="position: absolute; top: 10px; left: 20px; font-size: 28px; cursor: pointer; color: var(--text-muted); font-weight: bold;">&times;</span>
+      <h3 style="color: var(--primary-color); font-weight: 800; font-size: 16px; margin-bottom: 12px;" id="codingModalTitle">تكويد وتفعيل حساب التاجر</h3>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;" id="codingModalSubtitle">سيتم حفظ كود التاجر وتغيير حالته إلى "تم التكويد"، مع إرسال بريد تفعيل تلقائي يحتوي على الكود الجديد.</p>
+      
+      <input type="hidden" id="codingMerchantId">
+      
+      <div class="form-group" style="margin-bottom: 20px;">
+        <label for="codingMerchantCode" style="font-weight: 700; font-size: 13px; margin-bottom: 8px; display: block; color: var(--text-color);">كود التاجر الجديد <span class="required">*</span></label>
+        <input type="text" id="codingMerchantCode" class="form-input" placeholder="مثال: YT-2849" required style="background-color: var(--bg-color);">
+      </div>
+      
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="cancelCodingBtn" class="btn btn-outline" style="padding: 10px 20px;">إلغاء</button>
+        <button id="saveCodingBtn" class="btn btn-primary" style="padding: 10px 25px;"><i class="bi bi-check-circle-fill"></i> حفظ وتفعيل</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Management Modal -->
+  <div id="userModal" class="image-modal" style="display: none; align-items: center; justify-content: center; padding-top: 0; background-color: rgba(0,0,0,0.5);">
+    <div style="background: white; width: 100%; max-width: 450px; padding: 25px; border-radius: var(--radius-md); box-shadow: var(--shadow-lg); position: relative; margin: 15px; direction: rtl; text-align: right;">
+      <span id="closeUserModal" style="position: absolute; top: 10px; left: 20px; font-size: 28px; cursor: pointer; color: var(--text-muted); font-weight: bold;">&times;</span>
+      <h3 style="color: var(--primary-color); font-weight: 800; font-size: 16px; margin-bottom: 12px;"><i class="bi bi-person-plus-fill"></i> إضافة مسؤول جديد للوحة التحكم</h3>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">يمكن للمسؤولين الجدد تسجيل الدخول واستعراض وتصدير بيانات التجار.</p>
+      
+      <form id="addUserForm">
+        <div class="form-group" style="margin-bottom: 15px;">
+          <label for="newUsername" style="font-weight: 700; font-size: 13px; margin-bottom: 6px; display: block;">اسم المستخدم الجديد <span class="required">*</span></label>
+          <input type="text" id="newUsername" class="form-input" placeholder="مثال: ali_admin" required style="background-color: var(--bg-color);">
+        </div>
+        <div class="form-group" style="margin-bottom: 20px;">
+          <label for="newPassword" style="font-weight: 700; font-size: 13px; margin-bottom: 6px; display: block;">كلمة المرور <span class="required">*</span></label>
+          <input type="password" id="newPassword" class="form-input" placeholder="6 أحرف على الأقل" required style="background-color: var(--bg-color);">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px;">
+          <button type="button" id="cancelUserBtn" class="btn btn-outline" style="padding: 10px 20px;">إلغاء</button>
+          <button type="submit" id="saveUserBtn" class="btn btn-primary" style="padding: 10px 25px;"><i class="bi bi-check-circle-fill"></i> إنشاء الحساب</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

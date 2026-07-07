@@ -1,0 +1,8 @@
+{
+  "ignore": [
+    "fallback_db.json",
+    "fallback_users.json",
+    "public/uploads/*",
+    "*.log"
+  ]
+}

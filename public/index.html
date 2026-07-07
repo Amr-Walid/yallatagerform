@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="page_title">يلا تاجر - طلب تسجيل وتكويد تاجر جديد</title>
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://www.google.com/recaptcha/api.js?onload=onloadCallback&render=explicit" async defer></script>
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Logo and Language Switcher -->
+    <div class="logo-header">
+      <img src="yalla_tager_logo.png" alt="Yalla Tager Logo">
+      <div class="lang-switch">
+        <button class="lang-btn" id="langEnBtn">English</button>
+        <button class="lang-btn active" id="langArBtn">العربية</button>
+      </div>
+    </div>
+
+    <!-- Main Registration Form -->
+    <div class="form-card">
+      
+      <div class="form-header-banner">
+        <h1 data-i18n="banner_title">برجاء إدخال البيانات للتحويل من سعر المستهلك إلى سعر الجملة</h1>
+        <p data-i18n="banner_desc">انضم إلى شبكة يلا تاجر وابدأ رحلتك التجارية بكل سهولة وأمان</p>
+      </div>
+
+      <form id="merchantForm" enctype="multipart/form-data">
+        
+        <!-- Section 1: Personal Info -->
+        <div class="form-section">
+          <h2 class="section-title" data-i18n="personal_info_title">البيانات الشخصية</h2>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label for="full_name"><span data-i18n="full_name_label">الاسم الكامل</span> <span class="required">*</span></label>
+              <input type="text" id="full_name" name="full_name" class="form-input" placeholder="مثال: أحمد محمد السيد" data-i18n-placeholder="full_name_placeholder" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="phone_number"><span data-i18n="phone_number_label">رقم الهاتف</span> <span class="required">*</span></label>
+              <input type="tel" id="phone_number" name="phone_number" class="form-input" placeholder="01xxxxxxxxx" data-i18n-placeholder="phone_number_placeholder" required pattern="[0-9]{11}">
+            </div>
+          </div>
+
+          <div class="form-group full-width">
+            <label for="email" data-i18n="email_label">البريد الإلكتروني</label>
+            <input type="email" id="email" name="email" class="form-input" placeholder="email@example.com" data-i18n-placeholder="email_placeholder">
+          </div>
+        </div>
+
+        <!-- Section 2: Store Info -->
+        <div class="form-section">
+          <h2 class="section-title" data-i18n="store_info_title">بيانات المتجر</h2>
+          
+          <div class="form-group full-width">
+            <label for="store_name"><span data-i18n="store_name_label">اسم المتجر</span> <span class="required">*</span></label>
+            <input type="text" id="store_name" name="store_name" class="form-input" placeholder="مثال: محل الأمل للبقالة" data-i18n-placeholder="store_name_placeholder" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="governorate"><span data-i18n="governorate_label">المحافظة</span> <span class="required">*</span></label>
+              <select id="governorate" name="governorate" class="form-select" required>
+                <option value="" disabled selected data-i18n="governorate_select_default">اختر المحافظة</option>
+                <option value="القاهرة" data-i18n="gov_cairo">القاهرة</option>
+                <option value="الجيزة" data-i18n="gov_giza">الجيزة</option>
+                <option value="الإسكندرية" data-i18n="gov_alex">الإسكندرية</option>
+                <option value="القليوبية" data-i18n="gov_qalyubia">القليوبية</option>
+                <option value="الدقهلية" data-i18n="gov_dakahlia">الدقهلية</option>
+                <option value="الغربية" data-i18n="gov_gharbia">الغربية</option>
+                <option value="الشرقية" data-i18n="gov_sharqia">الشرقية</option>
+                <option value="المنوفية" data-i18n="gov_monufia">المنوفية</option>
+                <option value="البحيرة" data-i18n="gov_beheira">البحيرة</option>
+                <option value="كفر الشيخ" data-i18n="gov_kafr">كفر الشيخ</option>
+                <option value="دمياط" data-i18n="gov_damietta">دمياط</option>
+                <option value="بورسعيد" data-i18n="gov_portsaid">بورسعيد</option>
+                <option value="الإسماعيلية" data-i18n="gov_ismailia">الإسماعيلية</option>
+                <option value="السويس" data-i18n="gov_suez">السويس</option>
+                <option value="الفيوم" data-i18n="gov_fayoum">الفيوم</option>
+                <option value="بني سويف" data-i18n="gov_beni_suef">بني سويف</option>
+                <option value="المنيا" data-i18n="gov_minya">المنيا</option>
+                <option value="أسيوط" data-i18n="gov_asyut">أسيوط</option>
+                <option value="سوهاج" data-i18n="gov_sohag">سوهاج</option>
+                <option value="قنا" data-i18n="gov_qena">قنا</option>
+                <option value="الأقصر" data-i18n="gov_luxor">الأقصر</option>
+                <option value="أسوان" data-i18n="gov_aswan">أسوان</option>
+                <option value="البحر الأحمر" data-i18n="gov_red_sea">البحر الأحمر</option>
+                <option value="الوادي الجديد" data-i18n="gov_new_valley">الوادي الجديد</option>
+                <option value="مطروح" data-i18n="gov_matrouh">مطروح</option>
+                <option value="شمال سيناء" data-i18n="gov_north_sinai">شمال سيناء</option>
+                <option value="جنوب سيناء" data-i18n="gov_south_sinai">جنوب سيناء</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="city"><span data-i18n="city_label">المدينة</span> <span class="required">*</span></label>
+              <input type="text" id="city" name="city" class="form-input" placeholder="مثال: مدينة نصر" data-i18n-placeholder="city_placeholder" required>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="category"><span data-i18n="category_label">التخصص / الفئة</span> <span class="required">*</span></label>
+              <select id="category" name="category" class="form-select" required>
+                <option value="" disabled selected data-i18n="category_select_default">مثال: الأدوات الكهربائية</option>
+                <option value="ادوات كهربائيه" data-i18n="cat_electric">ادوات كهربائيه</option>
+                <option value="موبيلات" data-i18n="cat_mobiles">موبيلات</option>
+                <option value="اجهزه كهربائيه" data-i18n="cat_appliances">اجهزه كهربائيه</option>
+                <option value="كاميرات" data-i18n="cat_cameras">كاميرات</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="supervisor_code" data-i18n="supervisor_code_label">كود المشرف (اختياري)</label>
+              <input type="text" id="supervisor_code" name="supervisor_code" class="form-input" placeholder="اكتب كود المشرف هنا" data-i18n-placeholder="supervisor_code_placeholder">
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: Geographic Location -->
+        <div class="form-section">
+          <h2 class="section-title" data-i18n="location_title">الموقع الجغرافي</h2>
+          
+          <div class="location-box">
+            <div class="location-status" id="locationStatusText">
+              <i class="bi bi-geo-alt-fill"></i> <span data-i18n="location_not_set">لم يتم تحديد الموقع بعد</span>
+            </div>
+            <button type="button" class="location-btn" id="getLocationBtn">
+              <i class="bi bi-cursor-fill"></i> <span data-i18n="get_location_btn">تحديد موقعي الحالي</span>
+            </button>
+          </div>
+          
+          <input type="hidden" id="latitude" name="latitude">
+          <input type="hidden" id="longitude" name="longitude">
+        </div>
+
+        <!-- Section 4: Photos and Activation Confirmation -->
+        <div class="form-section">
+          <h2 class="section-title" data-i18n="photos_section_title">صور التسجيل وتأكيد الحساب</h2>
+
+          <div class="form-row">
+            <!-- Store Front Photo -->
+            <div class="form-group">
+              <label><span data-i18n="store_photo_label">صورة واجهة المتجر</span> <span class="required">*</span></label>
+              <div class="file-upload-container" id="storePhotoContainer">
+                <i class="bi bi-shop file-upload-icon"></i>
+                <span class="file-upload-text" data-i18n="upload_btn_text">اضغط لرفع صورة</span>
+                <span class="file-upload-hint" data-i18n="upload_hint">JPG, PNG, WEBP — حجم أقصى 5MB</span>
+                <input type="file" id="store_photo" name="store_photo" class="file-upload-input" accept="image/*" required>
+                <div class="file-preview" id="storePhotoPreview"></div>
+              </div>
+            </div>
+
+            <!-- National ID Photo -->
+            <div class="form-group">
+              <label><span data-i18n="id_photo_label">صورة بطاقة الهوية الوطنية</span> <span class="required">*</span></label>
+              <div class="file-upload-container" id="idPhotoContainer">
+                <i class="bi bi-person-vcard file-upload-icon"></i>
+                <span class="file-upload-text" data-i18n="upload_btn_text">اضغط لرفع صورة</span>
+                <span class="file-upload-hint" data-i18n="upload_hint">JPG, PNG, WEBP — حجم أقصى 5MB</span>
+                <input type="file" id="id_photo" name="id_photo" class="file-upload-input" accept="image/*" required>
+                <div class="file-preview" id="idPhotoPreview"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Note Box -->
+          <div class="warning-box">
+            <div class="warning-title">
+              <i class="bi bi-exclamation-triangle-fill"></i> <span data-i18n="note_title">ملحوظة:</span>
+            </div>
+            <div class="warning-desc" data-i18n="note_desc">
+              برجاء إنشاء حساب على الموقع للتاجر قبل طلب التكويد، بالإضافة إلى التأكد من تفعيل الحساب من خلال الإيميل الذي تم إنشاء الحساب به.
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="read_note" required>
+              <span data-i18n="note_checkbox_label">تم قراءة الملحوظة وتأكيد إنشاء وتفعيل الحساب</span>
+            </label>
+          </div>
+
+          <!-- Account confirmation radio buttons -->
+          <div class="radio-group-wrapper">
+            <div class="radio-group-title" data-i18n="created_account_question">هل قمت بإنشاء حساب على موقع للتاجر؟ <span class="required">*</span></div>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="created_account" value="نعم" required> <span data-i18n="yes_label">نعم</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="created_account" value="لا" required> <span data-i18n="no_label">لا</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Google reCAPTCHA Section -->
+        <div class="form-section captcha-section" style="margin-bottom: 20px; display: flex; flex-direction: column; align-items: center;">
+          <h2 class="section-title" data-i18n="captcha_title" style="align-self: flex-start; width: 100%;">رمز التحقق (الكابتشا)</h2>
+          <div style="margin: 15px 0; display: flex; justify-content: center; width: 100%;">
+            <!-- The reCAPTCHA widget will be rendered explicitly using configuration from environment variables -->
+            <div id="recaptchaWidget"></div>
+          </div>
+        </div>
+
+        <!-- Submit Button and Progress Bar -->
+        <div class="submit-btn-container">
+          <button type="submit" class="submit-btn" id="submitBtn">
+            <i class="bi bi-send-fill"></i> &nbsp;<span data-i18n="submit_btn">إرسال طلب التسجيل</span>
+          </button>
+          
+          <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+        </div>
+
+      </form>
+    </div>
+
+    <div class="footer-copyright">
+      <span data-i18n="footer_copy">&copy; 2026 يلا تاجر — جميع الحقوق محفوظة</span>
+      <br>
+      <i class="bi bi-shield-lock-fill"></i> <span data-i18n="footer_encryption">🔒 بياناتك محمية ومشفرة بالكامل</span>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

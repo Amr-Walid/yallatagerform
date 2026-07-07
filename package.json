@@ -1,0 +1,24 @@
+{
+  "name": "yallatagerform",
+  "version": "1.0.0",
+  "description": "Yalla Tager Merchant Coding Form & Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "mssql": "^11.0.1",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.13"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "private": true
+}
