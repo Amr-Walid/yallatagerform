@@ -1,16 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
-const sql = require('mssql');
 const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
-
-const CAPTCHA_SECRET = process.env.CAPTCHA_SECRET || 'yalla-tager-captcha-secret-key-12345';
-function generateCaptchaHash(answer) {
-  return crypto.createHmac('sha256', CAPTCHA_SECRET).update(answer.toString().trim()).digest('hex');
-}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,26 +42,67 @@ const upload = multer({
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const db = require('./db');
+const merchantLookup = require('./services/merchantLookup');
+const security = require('./services/securityMonitor');
+const { createRateLimiter } = require('./middleware/rateLimit');
+
+// Public merchant lookup is rate limited to prevent phone-number enumeration.
+// Every block is reported to the security monitor so the admin sees who is
+// hammering the endpoint, not just a line in the server log.
+const lookupRateLimiter = createRateLimiter({
+  windowMs: parseInt(process.env.LOOKUP_RATE_WINDOW_MS, 10) || 60000,
+  max: parseInt(process.env.LOOKUP_RATE_MAX, 10) || 15,
+  message: 'عدد كبير من محاولات الاستعلام. برجاء الانتظار قليلاً ثم إعادة المحاولة.',
+  onBlocked: (info) => security.recordRateLimited(info)
+});
+
+// Registration submissions are rate limited as well (abuse protection now
+// that the CAPTCHA has been removed from the form).
+const submitRateLimiter = createRateLimiter({
+  windowMs: parseInt(process.env.SUBMIT_RATE_WINDOW_MS, 10) || 600000,
+  max: parseInt(process.env.SUBMIT_RATE_MAX, 10) || 10,
+  message: 'عدد كبير من محاولات الإرسال. برجاء الانتظار قليلاً ثم إعادة المحاولة.',
+  onBlocked: (info) => security.recordRateLimited(info)
+});
+
+// Trust the reverse proxy so req.ip is the real client address rather than the
+// proxy's — otherwise every visitor collapses into one IP and the monitor
+// cannot tell attackers apart.
+app.set('trust proxy', process.env.TRUST_PROXY === 'false' ? false : 1);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser('yalla-tager-cookie-secret'));
 
-// Custom middleware to protect static dashboard files before express.static is loaded
+// Security inspection runs BEFORE any route: it counts traffic and rejects
+// requests carrying SQL-injection / XSS / path-traversal payloads with 400,
+// so a malicious payload never reaches the database or the filesystem.
+app.use(security.inspectRequest);
+
+// Custom middleware to protect static dashboard files before express.static is loaded.
+// Note: extension-less aliases (/dashboard, /login) are normalized here too, otherwise
+// they fall through to the catch-all and silently serve the public form page.
 app.use((req, res, next) => {
-  const normalizedPath = req.path.toLowerCase();
-  if (normalizedPath === '/dashboard.html' || normalizedPath === '/dashboard.js') {
+  const normalizedPath = req.path.toLowerCase().replace(/\/+$/, '') || '/';
+  if (normalizedPath === '/dashboard' || normalizedPath === '/dashboard.html' || normalizedPath === '/dashboard.js') {
     const token = req.cookies.token;
     if (!token) {
       return res.redirect('/login.html');
     }
     try {
       jwt.verify(token, process.env.JWT_SECRET || 'yalla-tager-super-secret-jwt-key-2026');
+      if (normalizedPath === '/dashboard') {
+        return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+      }
       next();
     } catch (err) {
       res.clearCookie('token');
       return res.redirect('/login.html');
     }
+  } else if (normalizedPath === '/login') {
+    // Clean alias for the admin login page.
+    return res.sendFile(path.join(__dirname, 'public', 'login.html'));
   } else {
     next();
   }
@@ -81,6 +115,14 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 const requireAuth = (req, res, next) => {
   const token = req.cookies.token;
   if (!token) {
+    // Recorded so repeated probing of admin endpoints surfaces on the
+    // security tab as "endpoint discovery" rather than staying invisible.
+    security.recordUnauthorized({
+      ip: req.ip,
+      route: `${req.method} ${req.path}`,
+      ua: req.get('user-agent'),
+      reason: 'طلب بدون تسجيل دخول'
+    });
     return res.status(401).json({ error: 'غير مصرح بالدخول. يرجى تسجيل الدخول أولاً.' });
   }
   try {
@@ -89,120 +131,28 @@ const requireAuth = (req, res, next) => {
     next();
   } catch (err) {
     res.clearCookie('token');
+    security.recordUnauthorized({
+      ip: req.ip,
+      route: `${req.method} ${req.path}`,
+      ua: req.get('user-agent'),
+      reason: 'تذكرة غير صالحة أو منتهية'
+    });
     return res.status(401).json({ error: 'انتهت صلاحية الجلسة. يرجى تسجيل الدخول مجدداً.' });
   }
 };
 
-// SQL Server Config (MSSQL Connection Pool Options)
-const dbConfig = {
-  server: process.env.DB_SERVER || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 1433,
-  database: process.env.DB_DATABASE || 'YallaTagerForm',
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  connectionTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 15000,
-  options: {
-    encrypt: process.env.DB_ENCRYPT === 'true',
-    trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === 'true'
-  }
-};
-
-let dbPool;
-
-// Function to initialize database and connect
+// Database initialization is handled by the data-access layer in ./db.js
+// It uses SQL Server when reachable and falls back to a local JSON store
+// (DB_DRIVER=auto by default). Set DB_DRIVER=mssql to enforce SQL Server only.
 async function initDb() {
   try {
-    // Connect directly to the database
-    console.log(`Connecting directly to SQL Server database [${dbConfig.database}] at ${dbConfig.server}:${dbConfig.port}...`);
-    dbPool = new sql.ConnectionPool(dbConfig);
-    
-    try {
-      await dbPool.connect();
-      console.log('Connected to SQL Server database successfully.');
-    } catch (connectErr) {
-      const errorMsg = connectErr.message.toLowerCase();
-      if (errorMsg.includes('database') && (errorMsg.includes('does not exist') || errorMsg.includes('cannot open database'))) {
-        console.log(`Database [${dbConfig.database}] does not exist. Attempting to create it via master...`);
-        const masterConfig = { ...dbConfig, database: 'master' };
-        const tempPool = new sql.ConnectionPool(masterConfig);
-        await tempPool.connect();
-        await tempPool.request().query(`CREATE DATABASE [${dbConfig.database}]`);
-        await tempPool.close();
-        console.log(`Database [${dbConfig.database}] created successfully.`);
-        
-        // Retry connection
-        await dbPool.connect();
-        console.log('Connected to SQL Server database successfully after database creation.');
-      } else {
-        throw connectErr;
-      }
-    }
-
-    // 3. Create table if not exists
-    await dbPool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='merchants' AND xtype='U')
-      BEGIN
-        CREATE TABLE merchants (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          full_name NVARCHAR(255) NOT NULL,
-          phone_number NVARCHAR(50) NOT NULL,
-          email NVARCHAR(255),
-          store_name NVARCHAR(255) NOT NULL,
-          governorate NVARCHAR(100) NOT NULL,
-          city NVARCHAR(100) NOT NULL,
-          category NVARCHAR(100) NOT NULL,
-          supervisor_code NVARCHAR(50),
-          agent_name NVARCHAR(255),
-          latitude DECIMAL(9,6),
-          longitude DECIMAL(9,6),
-          store_photo NVARCHAR(MAX),
-          id_photo NVARCHAR(MAX),
-          created_account NVARCHAR(10) NOT NULL,
-          status NVARCHAR(50) DEFAULT 'pending',
-          merchant_code NVARCHAR(100),
-          downloaded BIT DEFAULT 0,
-          downloaded_at DATETIME,
-          uploaded BIT DEFAULT 0,
-          uploaded_at DATETIME,
-          created_at DATETIME DEFAULT GETDATE(),
-          coded_at DATETIME
-        );
-      END
-    `);
-    console.log('Table [merchants] verified/created in SQL Server.');
-
-    // 4. Create users table if not exists
-    await dbPool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='users' AND xtype='U')
-      BEGIN
-        CREATE TABLE users (
-          id INT IDENTITY(1,1) PRIMARY KEY,
-          username NVARCHAR(100) UNIQUE NOT NULL,
-          password_hash NVARCHAR(MAX) NOT NULL,
-          created_at DATETIME DEFAULT GETDATE()
-        );
-      END
-    `);
-    console.log('Table [users] verified/created in SQL Server.');
-
-    // Seed default admin if users table is empty
-    const userCheck = await dbPool.request().query('SELECT COUNT(*) AS count FROM users');
-    if (userCheck.recordset[0].count === 0) {
-      const defaultHash = bcrypt.hashSync('YallaTagerAdmin2026', 10);
-      const seedReq = dbPool.request();
-      seedReq.input('username', sql.NVarChar(100), 'admin');
-      seedReq.input('password_hash', sql.NVarChar(sql.MAX), defaultHash);
-      await seedReq.query(`
-        INSERT INTO users (username, password_hash, created_at)
-        VALUES (@username, @password_hash, GETDATE())
-      `);
-      console.log('🎉 Default admin user seeded successfully in SQL Server.');
-    }
-
+    await db.init();
+    console.log(`[DB] Active storage driver: ${db.mode}`);
   } catch (err) {
-    console.error('❌ FATAL: SQL Server Connection Failed:', err.message);
+    console.error('FATAL: Database initialization failed:', err.message);
     console.log('----------------------------------------------------------------------');
-    console.log('Server cannot start without database connection.');
+    console.log('Server cannot start without a database connection.');
+    console.log('Tip: set DB_DRIVER=auto (or file) in .env to run with the local store.');
     console.log('----------------------------------------------------------------------');
     process.exit(1);
   }
@@ -230,20 +180,25 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    if (!dbPool) return res.status(500).json({ error: 'Database connection is not active.' });
-    const request = dbPool.request();
-    request.input('username', sql.NVarChar(100), username.trim());
-    const result = await request.query('SELECT * FROM users WHERE username = @username');
-    const user = result.recordset[0];
+    if (!db.isReady()) return res.status(500).json({ error: 'Database connection is not active.' });
+    const user = await db.findUserByUsername(username.trim());
 
     if (!user) {
       console.warn(`[AUTH] Failed login attempt (user not found): ${username}`);
+      security.recordLoginAttempt({
+        ip: req.ip, username, success: false,
+        reason: 'مستخدم غير موجود', ua: req.get('user-agent')
+      });
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       console.warn(`[AUTH] Failed login attempt (incorrect password): ${username}`);
+      security.recordLoginAttempt({
+        ip: req.ip, username, success: false,
+        reason: 'كلمة مرور خاطئة', ua: req.get('user-agent')
+      });
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
     }
 
@@ -257,6 +212,9 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
     console.log(`[AUTH] User logged in successfully: ${user.username}`);
+    security.recordLoginAttempt({
+      ip: req.ip, username: user.username, success: true, ua: req.get('user-agent')
+    });
     res.json({ success: true, message: 'تم تسجيل الدخول بنجاح.' });
   } catch (err) {
     console.error(err);
@@ -292,27 +250,17 @@ app.post('/api/auth/register', requireAuth, async (req, res) => {
   }
 
   try {
+    if (!db.isReady()) return res.status(500).json({ error: 'Database connection is not active.' });
+
     const passwordHash = await bcrypt.hash(password, 10);
 
-
-
-    if (!dbPool) return res.status(500).json({ error: 'Database connection is not active.' });
-
     // Verify uniqueness
-    const checkReq = dbPool.request();
-    checkReq.input('username', sql.NVarChar(100), username.trim());
-    const checkRes = await checkReq.query('SELECT COUNT(*) AS count FROM users WHERE username = @username');
-    if (checkRes.recordset[0].count > 0) {
+    const existing = await db.findUserByUsername(username.trim());
+    if (existing) {
       return res.status(400).json({ error: 'اسم المستخدم مسجل بالفعل.' });
     }
 
-    const insertReq = dbPool.request();
-    insertReq.input('username', sql.NVarChar(100), username.trim());
-    insertReq.input('password_hash', sql.NVarChar(sql.MAX), passwordHash);
-    await insertReq.query(`
-      INSERT INTO users (username, password_hash, created_at)
-      VALUES (@username, @password_hash, GETDATE())
-    `);
+    await db.createUser({ username: username.trim(), password_hash: passwordHash });
 
     res.status(201).json({ success: true, message: 'تم إنشاء حساب المسؤول بنجاح.' });
   } catch (err) {
@@ -321,15 +269,83 @@ app.post('/api/auth/register', requireAuth, async (req, res) => {
   }
 });
 
-// 0. Fetch Client-Side Configurations (like reCAPTCHA sitekey)
+// 0. Public client-side configuration
 app.get('/api/config', (req, res) => {
   res.json({
-    recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI'
+    // Number of days a merchant record stays viewable in the lookup flow
+    lookupRecentDays: merchantLookup.RECENT_WINDOW_DAYS
   });
 });
 
-// 1. Submit Form (Street Agent) with Google reCAPTCHA v2 Verification
-app.post('/api/merchants', upload.fields([
+// 0.b Merchant lookup for the "Yalla Tager customer" entry flow.
+//
+// The privacy decision is made ENTIRELY on the server: when a record is
+// older than the allowed window we return only the status, never the
+// merchant fields, so restricted data never reaches the browser at all.
+//
+// Rate limited because this is a public endpoint that answers questions
+// about merchant phone numbers (enumeration protection).
+app.get('/api/lookup', lookupRateLimiter, async (req, res) => {
+  const { phone } = req.query;
+
+  if (!phone || !String(phone).trim()) {
+    return res.status(400).json({ error: 'برجاء إدخال رقم الهاتف.' });
+  }
+
+  try {
+    const result = await merchantLookup.lookupMerchant(phone);
+
+    // Enrich the "awaiting coding" case with our own local record, if the
+    // merchant already submitted through this system.
+    if (result.status === merchantLookup.LookupStatus.AWAITING_CODING && db.isReady()) {
+      try {
+        const local = await db.findMerchantByPhone(result.phone);
+        result.localRequestExists = Boolean(local);
+        if (local) result.localStatus = local.status;
+      } catch (err) {
+        console.error('[LOOKUP] Local record check failed:', err.message);
+      }
+    }
+
+    // Audit trail: who asked about which number and what the answer was.
+    // The phone is masked inside the monitor so the security log itself never
+    // becomes a leaked list of customer numbers.
+    security.recordLookup({
+      ip: req.ip,
+      phone: result.phone || phone,
+      status: result.status,
+      ua: req.get('user-agent')
+    });
+
+    return res.json(result);
+  } catch (err) {
+    if (err.code === 'INVALID_PHONE') {
+      security.recordLookup({
+        ip: req.ip, phone, status: 'invalid_phone',
+        ua: req.get('user-agent'), valid: false
+      });
+      return res.status(400).json({
+        error: 'رقم الهاتف غير صحيح. برجاء إدخال رقم مصري صحيح مكوّن من 11 رقماً يبدأ بـ 01.'
+      });
+    }
+
+    console.error('[LOOKUP] Failed:', err.code || '', err.message);
+
+    if (err.code === 'CONFIG_MISSING' || err.code === 'UPSTREAM_UNAUTHORIZED') {
+      // Server-side misconfiguration - do not leak details to the client
+      return res.status(503).json({
+        error: 'خدمة الاستعلام غير متاحة حالياً. برجاء التواصل مع فريق الدعم.'
+      });
+    }
+
+    return res.status(503).json({
+      error: 'تعذر الوصول لخدمة الاستعلام حالياً. برجاء المحاولة بعد قليل.'
+    });
+  }
+});
+
+// 1. Submit registration form (merchant self-completion or field sales agent)
+app.post('/api/merchants', submitRateLimiter, upload.fields([
   { name: 'store_photo', maxCount: 1 },
   { name: 'id_photo', maxCount: 1 }
 ]), async (req, res) => {
@@ -354,95 +370,70 @@ app.post('/api/merchants', upload.fields([
       city,
       category,
       supervisor_code,
-      agent_name,
       latitude,
       longitude,
       created_account
     } = req.body;
 
-    const captchaToken = req.body['g-recaptcha-response'];
+    // Registration source: which entry flow the request came from.
+    //  - 'merchant'    : Yalla Tager customer who completed their own data
+    //  - 'field_sales' : field sales agent registering a merchant on the ground
+    const source = req.body.source === 'field_sales' ? 'field_sales' : 'merchant';
 
     // Use relative paths 'uploads/...' instead of absolute '/uploads/...' for Nginx subdirectory routing safety
     const storePhotoPath = req.files['store_photo'] ? 'uploads/' + req.files['store_photo'][0].filename : null;
     const idPhotoPath = req.files['id_photo'] ? 'uploads/' + req.files['id_photo'][0].filename : null;
 
-    // Verify Google reCAPTCHA v2 Token
-    const tokenStr = Array.isArray(captchaToken) 
-      ? captchaToken[0] 
-      : (typeof captchaToken === 'string' ? captchaToken : '');
-
-    if (!tokenStr || !tokenStr.trim()) {
-      deleteFiles();
-      return res.status(400).json({ error: 'برجاء تأكيد رمز التحقق (أنا لست برنامج روبوت) أولاً.' });
-    }
-
-    const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '6LeIxAcTAAAAAGG-vFI1qkvx2h0nFEP5cGFqpGA9'; // Official Google test key
-    
-    console.log('--- reCAPTCHA Verification Debug ---');
-    console.log('captchaToken type:', typeof captchaToken);
-    console.log('captchaToken value:', captchaToken);
-    console.log('tokenStr value:', tokenStr);
-    console.log('RECAPTCHA_SECRET (first 5 chars):', RECAPTCHA_SECRET ? RECAPTCHA_SECRET.substring(0, 5) : 'undefined');
-    console.log('RECAPTCHA_SECRET length:', RECAPTCHA_SECRET ? RECAPTCHA_SECRET.length : 0);
-
-    try {
-      const verifyRes = await fetch('https://www.google.com/recaptcha/api/siteverify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `secret=${encodeURIComponent(RECAPTCHA_SECRET.trim())}&response=${encodeURIComponent(tokenStr.trim())}`
-      });
-      const verifyJson = await verifyRes.json();
-      console.log('reCAPTCHA Verification Response:', verifyJson);
-      
-      if (!verifyJson.success) {
-        deleteFiles();
-        return res.status(400).json({ error: 'فشل التحقق من الكابتشا. برجاء المحاولة مرة أخرى.' });
-      }
-    } catch (err) {
-      console.error('reCAPTCHA verification error:', err);
-      deleteFiles();
-      return res.status(500).json({ error: 'حدث خطأ أثناء التحقق من الكابتشا.' });
-    }
-
     if (!full_name || !phone_number || !store_name || !governorate || !city || !category || !created_account) {
       deleteFiles();
-      return res.status(400).json({ error: 'Please fill all required fields.' });
+      return res.status(400).json({ error: 'برجاء ملء جميع الحقول المطلوبة.' });
     }
 
+    // Normalize and validate the phone number so the stored value always
+    // matches the format the lookup service expects (01xxxxxxxxx).
+    const normalizedPhone = merchantLookup.normalizePhone(phone_number);
+    if (!merchantLookup.isValidEgyptianMobile(normalizedPhone)) {
+      deleteFiles();
+      return res.status(400).json({
+        error: 'رقم الهاتف غير صحيح. برجاء إدخال رقم مصري صحيح مكوّن من 11 رقماً يبدأ بـ 01.'
+      });
+    }
 
-
-    if (!dbPool) {
+    if (!db.isReady()) {
       deleteFiles();
       return res.status(500).json({ error: 'Database connection is not active.' });
     }
 
-    const request = dbPool.request();
-    request.input('full_name', sql.NVarChar(255), full_name);
-    request.input('phone_number', sql.NVarChar(50), phone_number);
-    request.input('email', sql.NVarChar(255), email || null);
-    request.input('store_name', sql.NVarChar(255), store_name);
-    request.input('governorate', sql.NVarChar(100), governorate);
-    request.input('city', sql.NVarChar(100), city);
-    request.input('category', sql.NVarChar(100), category);
-    request.input('supervisor_code', sql.NVarChar(50), supervisor_code || null);
-    request.input('agent_name', sql.NVarChar(255), agent_name || null);
-    request.input('latitude', sql.Decimal(9, 6), latitude ? parseFloat(latitude) : null);
-    request.input('longitude', sql.Decimal(9, 6), longitude ? parseFloat(longitude) : null);
-    request.input('store_photo', sql.NVarChar(sql.MAX), storePhotoPath);
-    request.input('id_photo', sql.NVarChar(sql.MAX), idPhotoPath);
-    request.input('created_account', sql.NVarChar(10), created_account);
+    // Prevent duplicate pending requests for the same phone number, which
+    // would otherwise create repeated work for the coding team.
+    const existingLocal = await db.findMerchantByPhone(normalizedPhone);
+    if (existingLocal && existingLocal.status !== 'coded') {
+      deleteFiles();
+      return res.status(409).json({
+        error: 'يوجد طلب تسجيل مسجّل بالفعل بهذا الرقم وجاري العمل عليه من فريق التكويد.'
+      });
+    }
 
-    await request.query(`
-      INSERT INTO merchants (
-        full_name, phone_number, email, store_name, governorate, city, category, 
-        supervisor_code, agent_name, latitude, longitude, store_photo, id_photo, 
-        created_account, status, downloaded, uploaded, created_at
-      ) VALUES (
-        @full_name, @phone_number, @email, @store_name, @governorate, @city, @category, 
-        @supervisor_code, @agent_name, @latitude, @longitude, @store_photo, @id_photo, 
-        @created_account, 'pending', 0, 0, GETDATE()
-      )
-    `);
+    await db.insertMerchant({
+      full_name,
+      phone_number: normalizedPhone,
+      email: email || null,
+      store_name,
+      governorate,
+      city,
+      category,
+      supervisor_code: supervisor_code || null,
+      latitude: latitude ? parseFloat(latitude) : null,
+      longitude: longitude ? parseFloat(longitude) : null,
+      store_photo: storePhotoPath,
+      id_photo: idPhotoPath,
+      created_account,
+      source
+    });
+
+    security.recordSubmit({
+      ip: req.ip, phone: normalizedPhone, source, ua: req.get('user-agent')
+    });
 
     res.status(201).json({ success: true, message: 'Merchant registered successfully!' });
   } catch (err) {
@@ -457,96 +448,135 @@ app.get('/api/merchants', requireAuth, async (req, res) => {
   try {
     const { status, downloaded, uploaded } = req.query;
 
-
-
-    if (!dbPool) {
+    if (!db.isReady()) {
       return res.status(500).json({ error: 'Database connection is not active.' });
     }
 
-    let query = 'SELECT * FROM merchants WHERE 1=1';
-    const request = dbPool.request();
-
-    if (status) {
-      query += ' AND status = @status';
-      request.input('status', sql.NVarChar(50), status);
-    }
-    if (downloaded !== undefined) {
-      query += ' AND downloaded = @downloaded';
-      request.input('downloaded', sql.Bit, downloaded === 'true' || downloaded === '1' ? 1 : 0);
-    }
-    if (uploaded !== undefined) {
-      query += ' AND uploaded = @uploaded';
-      request.input('uploaded', sql.Bit, uploaded === 'true' || uploaded === '1' ? 1 : 0);
-    }
-
-    query += ' ORDER BY created_at DESC';
-    const result = await request.query(query);
-    res.json(result.recordset);
+    const records = await db.listMerchants({ status, downloaded, uploaded });
+    res.json(records);
   } catch (err) {
     console.error('Error fetching merchants:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Export CSV (and mark as downloaded)
+/**
+ * Build the CSV payload for a set of merchant rows.
+ * Kept separate from the routes so the "new only" and "selected" exports
+ * always produce an identical column layout.
+ */
+function buildMerchantsCsv(records) {
+  const BOM = '\uFEFF';
+  const headers = [
+    'ID', 'الاسم الكامل', 'رقم الهاتف', 'البريد الإلكتروني', 'اسم المتجر',
+    'المحافظة', 'المدينة', 'التخصص/الفئة', 'كود المشرف',
+    'خط العرض', 'خط الطول', 'تاريخ الرفع', 'هل أنشأ حساب', 'مصدر التسجيل'
+  ];
+
+  let csvContent = BOM + headers.join(',') + '\n';
+
+  records.forEach(row => {
+    const csvRow = [
+      row.id,
+      `"${(row.full_name || '').replace(/"/g, '""')}"`,
+      `"${(row.phone_number || '')}"`,
+      `"${(row.email || '')}"`,
+      `"${(row.store_name || '').replace(/"/g, '""')}"`,
+      `"${(row.governorate || '').replace(/"/g, '""')}"`,
+      `"${(row.city || '').replace(/"/g, '""')}"`,
+      `"${(row.category || '').replace(/"/g, '""')}"`,
+      `"${(row.supervisor_code || '')}"`,
+      row.latitude || '',
+      row.longitude || '',
+      // Quoted: the localized date string contains a comma which would
+      // otherwise shift all following CSV columns.
+      `"${row.created_at ? new Date(row.created_at).toLocaleString('en-US') : ''}"`,
+      `"${row.created_account || ''}"`,
+      `"${row.source === 'field_sales' ? 'مبيعات على الأرض' : 'عميل يلا تاجر'}"`
+    ];
+    csvContent += csvRow.join(',') + '\n';
+  });
+
+  return csvContent;
+}
+
+function sendCsv(res, csvContent, prefix) {
+  const filename = `${prefix}-${Date.now()}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.status(200).send(csvContent);
+}
+
+// 3. Export CSV of NEW records only (and mark them as downloaded)
 app.get('/api/merchants/export/csv', requireAuth, async (req, res) => {
   try {
-    let records = [];
-
-    if (!dbPool) {
+    if (!db.isReady()) {
       return res.status(500).json({ error: 'Database connection is not active.' });
     }
-    const result = await dbPool.request().query(`
-      SELECT * FROM merchants WHERE downloaded = 0 ORDER BY created_at DESC
-    `);
-    records = result.recordset;
+    const records = await db.getUndownloadedMerchants();
 
     if (records.length === 0) {
       return res.status(404).send('No new merchants to download.');
     }
 
-    const BOM = '\uFEFF';
-    let csvContent = BOM;
-    const headers = [
-      'ID', 'الاسم الكامل', 'رقم الهاتف', 'البريد الإلكتروني', 'اسم المتجر', 
-      'المحافظة', 'المدينة', 'التخصص/الفئة', 'كود المشرف', 'اسم المندوب', 
-      'خط العرض', 'خط الطول', 'تاريخ الرفع', 'هل أنشأ حساب'
-    ];
-    csvContent += headers.join(',') + '\n';
-
-    records.forEach(row => {
-      const csvRow = [
-        row.id,
-        `"${(row.full_name || '').replace(/"/g, '""')}"`,
-        `"${(row.phone_number || '')}"`,
-        `"${(row.email || '')}"`,
-        `"${(row.store_name || '').replace(/"/g, '""')}"`,
-        `"${(row.governorate || '').replace(/"/g, '""')}"`,
-        `"${(row.city || '').replace(/"/g, '""')}"`,
-        `"${(row.category || '').replace(/"/g, '""')}"`,
-        `"${(row.supervisor_code || '')}"`,
-        `"${(row.agent_name || '').replace(/"/g, '""')}"`,
-        row.latitude || '',
-        row.longitude || '',
-        row.created_at ? new Date(row.created_at).toLocaleString('en-US') : '',
-        row.created_account || ''
-      ];
-      csvContent += csvRow.join(',') + '\n';
-    });
-
-    const ids = records.map(r => r.id).join(',');
-    await dbPool.request().query(`
-      UPDATE merchants 
-      SET downloaded = 1, downloaded_at = GETDATE()
-      WHERE id IN (${ids})
-    `);
-
-    const filename = `yalla-tager-merchants-${Date.now()}.csv`;
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.status(200).send(csvContent);
+    const csvContent = buildMerchantsCsv(records);
+    await db.markDownloaded(records.map(r => r.id));
+    sendCsv(res, csvContent, 'yalla-tager-merchants');
   } catch (err) {
     console.error('CSV Export failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * 3b. Re-export ANY records by id, whether or not they were downloaded before.
+ *
+ * This is the "download again / download selected" path. It deliberately does
+ * NOT change the downloaded flag: re-downloading a file is not new work, so the
+ * original downloaded_at timestamp must stay intact for the audit trail.
+ */
+app.post('/api/merchants/export/csv', requireAuth, async (req, res) => {
+  try {
+    if (!db.isReady()) {
+      return res.status(500).json({ error: 'Database connection is not active.' });
+    }
+
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Please provide an array of IDs.' });
+    }
+
+    const records = await db.getMerchantsByIds(ids);
+    if (records.length === 0) {
+      return res.status(404).json({ error: 'No matching merchants found.' });
+    }
+
+    sendCsv(res, buildMerchantsCsv(records), 'yalla-tager-selected');
+  } catch (err) {
+    console.error('CSV re-export failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * 3c. Reset the downloaded flag so records show up in the "new only" export
+ * again. Useful when a download was lost or flagged by mistake.
+ */
+app.post('/api/merchants/reset-downloaded', requireAuth, async (req, res) => {
+  try {
+    if (!db.isReady()) {
+      return res.status(500).json({ error: 'Database connection is not active.' });
+    }
+
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Please provide an array of IDs.' });
+    }
+
+    const count = await db.resetDownloaded(ids);
+    res.json({ success: true, count });
+  } catch (err) {
+    console.error('Reset downloaded failed:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -559,9 +589,7 @@ app.post('/api/merchants/mark-uploaded', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Please provide an array of IDs.' });
     }
 
-
-
-    if (!dbPool) {
+    if (!db.isReady()) {
       return res.status(500).json({ error: 'Database connection is not active.' });
     }
 
@@ -569,12 +597,8 @@ app.post('/api/merchants/mark-uploaded', requireAuth, async (req, res) => {
     if (parsedIds.length === 0) {
       return res.status(400).json({ error: 'لم يتم تقديم أي معرفات صالحة.' });
     }
-    const idsStr = parsedIds.join(',');
-    await dbPool.request().query(`
-      UPDATE merchants 
-      SET uploaded = 1, uploaded_at = GETDATE() 
-      WHERE id IN (${idsStr})
-    `);
+
+    await db.markUploaded(parsedIds);
 
     res.json({ success: true, message: 'Merchants marked as uploaded successfully.' });
   } catch (err) {
@@ -593,31 +617,17 @@ app.post('/api/merchants/:id/code', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Merchant code is required.' });
     }
 
-    let merchant;
-
-    if (!dbPool) {
+    if (!db.isReady()) {
       return res.status(500).json({ error: 'Database connection is not active.' });
     }
 
-    const getReq = dbPool.request();
-    getReq.input('id', sql.Int, id);
-    const mRes = await getReq.query('SELECT * FROM merchants WHERE id = @id');
-    merchant = mRes.recordset[0];
-
-    if (merchant) {
-      const updateReq = dbPool.request();
-      updateReq.input('id', sql.Int, id);
-      updateReq.input('merchant_code', sql.NVarChar(100), merchant_code);
-      await updateReq.query(`
-        UPDATE merchants 
-        SET status = 'coded', merchant_code = @merchant_code, coded_at = GETDATE() 
-        WHERE id = @id
-      `);
-    }
+    const merchant = await db.getMerchantById(id);
 
     if (!merchant) {
       return res.status(404).json({ error: 'Merchant not found.' });
     }
+
+    await db.setMerchantCode(id, merchant_code);
 
     let emailSent = false;
     let emailError = null;
@@ -672,6 +682,42 @@ app.post('/api/merchants/:id/code', requireAuth, async (req, res) => {
   }
 });
 
+/* -------------------------------------------------------------------------- */
+/* 6. Security monitoring (مراقبة الأمان والاستعلامات)                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Everything the security tab needs in one response: the overall verdict
+ * ("all safe" vs. a ranked threat list), who is running lookups and how many,
+ * plus live server-health signals that predict a crash (memory, event-loop
+ * lag, request spikes, database availability).
+ */
+app.get('/api/security/overview', requireAuth, (req, res) => {
+  try {
+    res.json(security.getOverview({ dbReady: db.isReady(), dbMode: db.mode }));
+  } catch (err) {
+    console.error('[SECURITY] Overview failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Mark the current alerts as reviewed by this admin. */
+app.post('/api/security/acknowledge', requireAuth, (req, res) => {
+  try {
+    // نمرّر نفس سياق قاعدة البيانات المُستخدم في الـ overview حتى تُراجَع
+    // تهديدات التخزين أيضاً بنفس مفاتيحها
+    const result = security.acknowledge(req.user && req.user.username, {
+      dbReady: db.isReady(),
+      dbMode: db.mode
+    });
+    console.log(`[SECURITY] Alerts acknowledged by ${result.acknowledgedBy}`);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[SECURITY] Acknowledge failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Handle 404
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -680,5 +726,8 @@ app.use((req, res) => {
 // Start Express and DB Initialization
 app.listen(PORT, async () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+  // Restore the persisted security log so a restart does not erase the
+  // history of who was probing the system.
+  security.restore();
   await initDb();
 });

@@ -93,18 +93,119 @@
           </select>
         </div>
 
-        <!-- Actions -->
-        <div class="form-group" style="flex-direction: row; gap: 10px;">
-          <button id="exportCsvBtn" class="btn btn-primary">
-            <i class="bi bi-file-earmark-arrow-down-fill"></i> تحميل البيانات الجديدة (CSV)
-          </button>
-          <button id="markUploadedBtn" class="btn btn-success">
-            <i class="bi bi-check-all"></i> تعليم كـ تم الرفع
-          </button>
+        <!-- Source Filter (مصدر التسجيل) -->
+        <div class="form-group">
+          <label for="filterSource">مصدر التسجيل</label>
+          <select id="filterSource" class="form-select">
+            <option value="">الكل</option>
+            <option value="merchant">عميل يلا تاجر</option>
+            <option value="field_sales">مبيعات على الأرض</option>
+          </select>
         </div>
 
       </div>
+
+      <!-- Actions: own row so the buttons keep their natural width
+           instead of being squeezed into a narrow filter grid cell. -->
+      <div class="filter-actions">
+        <button id="exportCsvBtn" class="btn btn-primary" title="يحمّل السجلات الجديدة فقط ويعلّمها كـ (تم التحميل)">
+          <i class="bi bi-file-earmark-arrow-down-fill"></i>
+          <span>تحميل البيانات الجديدة (CSV)</span>
+        </button>
+        <!-- Re-download: works on any selected rows, even already-downloaded
+             ones, and does NOT touch the downloaded flag. -->
+        <button id="exportSelectedBtn" class="btn btn-outline" title="يحمّل السجلات المحددة في الجدول مهما كانت حالتها، بدون تغيير حالة التحميل">
+          <i class="bi bi-download"></i>
+          <span>تحميل المحدد (CSV)</span>
+        </button>
+        <button id="resetDownloadedBtn" class="btn btn-outline" title="يرجّع السجلات المحددة لحالة (لم يتم التحميل) لتظهر في تحميل البيانات الجديدة">
+          <i class="bi bi-arrow-counterclockwise"></i>
+          <span>إرجاع كـ غير محمّل</span>
+        </button>
+        <button id="markUploadedBtn" class="btn btn-success">
+          <i class="bi bi-check-all"></i>
+          <span>تعليم كـ تم الرفع</span>
+        </button>
+        <span class="selection-count" id="selectionCount">لم يتم تحديد أي سجل</span>
+      </div>
     </div>
+
+    <!--
+      Security & Lookup Monitoring tab.
+      Collapsed by default so it stays a small strip: the header alone tells
+      the admin whether everything is safe, and expands only on demand.
+    -->
+    <section class="sec-panel" id="securityPanel" data-level="safe">
+      <button type="button" class="sec-head" id="securityToggle" aria-expanded="false" aria-controls="securityBody">
+        <span class="sec-head-main">
+          <i class="bi bi-shield-check sec-icon" id="securityIcon"></i>
+          <span class="sec-head-text">
+            <span class="sec-title">مراقبة الأمان والاستعلامات</span>
+            <span class="sec-headline" id="securityHeadline">جاري فحص حالة النظام…</span>
+          </span>
+        </span>
+        <span class="sec-head-side">
+          <span class="sec-pill" id="securityPill">—</span>
+          <span class="sec-alert-dot" id="securityAlertDot" hidden></span>
+          <i class="bi bi-chevron-down sec-chevron" id="securityChevron"></i>
+        </span>
+      </button>
+
+      <div class="sec-body" id="securityBody" hidden>
+
+        <!-- Quick counters -->
+        <div class="sec-metrics" id="securityMetrics"></div>
+
+        <!-- Threats -->
+        <div class="sec-section">
+          <div class="sec-section-title">
+            <span><i class="bi bi-exclamation-triangle"></i> التهديدات المرصودة</span>
+            <button type="button" class="sec-mini-btn" id="securityAckBtn" title="تعليم التنبيهات الحالية كمقروءة">
+              <i class="bi bi-check2-all"></i> قرأتُ التنبيهات
+            </button>
+          </div>
+          <div id="securityThreats" class="sec-threats"></div>
+        </div>
+
+        <!-- Server health -->
+        <div class="sec-section">
+          <div class="sec-section-title"><span><i class="bi bi-hdd-stack"></i> صحة السيرفر</span></div>
+          <div class="sec-health" id="securityHealth"></div>
+        </div>
+
+        <!-- Who is running lookups -->
+        <div class="sec-section">
+          <div class="sec-section-title"><span><i class="bi bi-people"></i> أكثر المصادر استعلاماً</span></div>
+          <div class="sec-table-wrap">
+            <table class="sec-table" id="securityActorsTable">
+              <thead>
+                <tr>
+                  <th>المصدر (IP)</th>
+                  <th>استعلامات</th>
+                  <th>أرقام مختلفة</th>
+                  <th>محجوب</th>
+                  <th>دخول فاشل</th>
+                  <th>مشبوه</th>
+                  <th>آخر نشاط</th>
+                </tr>
+              </thead>
+              <tbody id="securityActorsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Raw audit log -->
+        <div class="sec-section">
+          <div class="sec-section-title"><span><i class="bi bi-list-ul"></i> سجل الأحداث الأخيرة</span></div>
+          <div class="sec-log" id="securityLog"></div>
+          <p class="sec-note">
+            <i class="bi bi-info-circle"></i>
+            أرقام الهواتف مُقنّعة في السجل (مثال: 0106****726) حتى لا يتحول سجل الأمان نفسه إلى تسريب لبيانات العملاء.
+          </p>
+        </div>
+
+      </div>
+    </section>
 
     <!-- Data Table Card -->
     <div class="table-card">
@@ -114,6 +215,7 @@
             <tr>
               <th style="width: 40px; text-align: center;"><input type="checkbox" id="selectAllCheckbox"></th>
               <th>العميل والمتجر</th>
+              <th style="text-align: center; width: 120px;">المصدر</th>
               <th>بيانات الاتصال</th>
               <th>الموقع الجغرافي</th>
               <th style="text-align: center; width: 110px;">المرفقات</th>

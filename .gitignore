@@ -4,3 +4,8 @@ public/uploads/*
 !public/uploads/.gitkeep
 .DS_Store
 *.log
+fallback_db.json
+fallback_users.json
+logs/
+# Runtime security audit log (contains visitor IPs — not for version control)
+security_log.json

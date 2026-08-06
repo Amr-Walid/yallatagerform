@@ -7,7 +7,6 @@
   <link rel="icon" href="favicon.png" type="image/png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://www.google.com/recaptcha/api.js?onload=onloadCallback&render=explicit" async defer></script>
 </head>
 <body>
 
@@ -22,7 +21,73 @@
       </div>
     </div>
 
-    <!-- Main Registration Form -->
+    <!-- ==================================================================
+         SCREEN 1: Entry gateway - choose the customer type
+         ================================================================== -->
+    <div class="screen active" id="screenGateway">
+      <div class="choice-card">
+        <div class="form-header-banner">
+          <h1 data-i18n="gateway_title">مرحباً بك في يلا تاجر</h1>
+          <p data-i18n="gateway_desc">برجاء اختيار نوع الدخول للمتابعة</p>
+        </div>
+        <div class="choice-body">
+          <div class="choice-grid">
+            <button type="button" class="choice-option" id="choiceMerchantBtn">
+              <i class="bi bi-shop choice-icon"></i>
+              <span class="choice-title" data-i18n="choice_merchant_title">عميل يلا تاجر</span>
+              <span class="choice-desc" data-i18n="choice_merchant_desc">لديك حساب على يلا تاجر؟ ادخل رقم هاتفك للاستعلام عن حالة التكويد</span>
+            </button>
+
+            <button type="button" class="choice-option" id="choiceFieldSalesBtn">
+              <i class="bi bi-person-badge choice-icon"></i>
+              <span class="choice-title" data-i18n="choice_field_title">مبيعات على الأرض</span>
+              <span class="choice-desc" data-i18n="choice_field_desc">مندوب مبيعات؟ ادخل بيانات التاجر الجديد كاملة مرة واحدة</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================================================================
+         SCREEN 2: Phone lookup for existing Yalla Tager customers
+         ================================================================== -->
+    <div class="screen" id="screenLookup">
+      <div class="choice-card">
+        <div class="form-header-banner">
+          <h1 data-i18n="lookup_title">الاستعلام عن حالة التكويد</h1>
+          <p data-i18n="lookup_desc">ادخل رقم الهاتف المسجّل لدينا لعرض حالة حسابك</p>
+        </div>
+        <div class="choice-body">
+          <button type="button" class="back-link" id="lookupBackBtn">
+            <i class="bi bi-arrow-right"></i> <span data-i18n="back_btn">رجوع</span>
+          </button>
+
+          <form id="lookupForm" novalidate>
+            <div class="form-group full-width">
+              <label for="lookup_phone">
+                <span data-i18n="phone_number_label">رقم الهاتف</span> <span class="required">*</span>
+              </label>
+              <div class="lookup-input-row">
+                <input type="tel" id="lookup_phone" class="form-input" placeholder="01xxxxxxxxx"
+                       data-i18n-placeholder="phone_number_placeholder" inputmode="numeric"
+                       autocomplete="tel" maxlength="15" required>
+                <button type="submit" class="submit-btn" id="lookupBtn">
+                  <i class="bi bi-search"></i> &nbsp;<span data-i18n="lookup_btn">استعلام</span>
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <!-- Lookup result is rendered here by app.js -->
+          <div id="lookupResult" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================================================================
+         SCREEN 3: Registration form
+         ================================================================== -->
+    <div class="screen" id="screenForm">
     <div class="form-card">
       
       <div class="form-header-banner">
@@ -31,7 +96,17 @@
       </div>
 
       <form id="merchantForm" enctype="multipart/form-data">
-        
+
+        <!-- Hidden: which entry flow produced this record (merchant | field_sales) -->
+        <input type="hidden" id="sourceInput" name="source" value="merchant">
+
+        <div class="form-toolbar">
+          <button type="button" class="back-link" id="formBackBtn">
+            <i class="bi bi-arrow-right-short"></i> <span data-i18n="back_btn">رجوع</span>
+          </button>
+          <span class="flow-badge" id="flowBadge"></span>
+        </div>
+
         <!-- Section 1: Personal Info -->
         <div class="form-section">
           <h2 class="section-title" data-i18n="personal_info_title">البيانات الشخصية</h2>
@@ -52,6 +127,9 @@
             <label for="email" data-i18n="email_label">البريد الإلكتروني</label>
             <input type="email" id="email" name="email" class="form-input" placeholder="email@example.com" data-i18n-placeholder="email_placeholder">
           </div>
+
+          <!-- يظهر فقط في مسار مبيعات الأرض (يتحكم فيه app.js) -->
+          <!-- تم إلغاء حقل "اسم المندوب" — كود المشرف (اختياري) بقسم بيانات المتجر يغطي الغرض -->
         </div>
 
         <!-- Section 2: Store Info -->
@@ -198,15 +276,6 @@
           </div>
         </div>
 
-        <!-- Google reCAPTCHA Section -->
-        <div class="form-section captcha-section" style="margin-bottom: 20px; display: flex; flex-direction: column; align-items: center;">
-          <h2 class="section-title" data-i18n="captcha_title" style="align-self: flex-start; width: 100%;">رمز التحقق (الكابتشا)</h2>
-          <div style="margin: 15px 0; display: flex; justify-content: center; width: 100%;">
-            <!-- The reCAPTCHA widget will be rendered explicitly using configuration from environment variables -->
-            <div id="recaptchaWidget"></div>
-          </div>
-        </div>
-
         <!-- Submit Button and Progress Bar -->
         <div class="submit-btn-container">
           <button type="submit" class="submit-btn" id="submitBtn">
@@ -220,6 +289,8 @@
 
       </form>
     </div>
+
+    </div><!-- /#screenForm -->
 
     <div class="footer-copyright">
       <span data-i18n="footer_copy">&copy; 2026 يلا تاجر — جميع الحقوق محفوظة</span>
